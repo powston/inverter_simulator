@@ -1,0 +1,22 @@
+Metadata-Version: 2.1
+Name: inverter-simulator
+Version: 0.1.0
+Summary: A simulator for inverter systems with battery storage
+Home-page: https://github.com/powston/inverter_simulator
+Author: Ian Connor
+Author-email: ian@powston.com
+License: UNKNOWN
+Platform: UNKNOWN
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown
+Provides-Extra: dev
+
+UNKNOWN

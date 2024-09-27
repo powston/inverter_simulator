@@ -1,0 +1,113 @@
+# Inverter Simulator
+
+## Overview
+
+Inverter Simulator is a Python-based tool designed to simulate and optimize battery and inverter configurations for solar energy systems. It can use formatted NEM12 file data along with market information to calculate potential savings and determine the most efficient setup for a given scenario.
+
+## Features
+
+- Simulates various battery and inverter configurations
+- Uses NEM12 formated files with market data
+- Calculates potential savings based on energy usage and market prices
+- Can be called in a loop, e.g. 4 inverters and 8 batteries in simulations
+- Generates CSV output for easy analysis of results
+
+## Installation
+
+To install the Inverter Simulator, follow these steps:
+
+1. Clone the repository:
+   ```
+   git clone https://github.com/powston/inverter_simulator.git
+   cd inverter_simulator
+   ```
+
+2. Create a virtual environment (optional but recommended):
+   ```
+   python -m venv venv
+   source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+   ```
+
+3. Install the required dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+
+## Usage
+
+### Command Line Interface
+
+To run a simulation using the command line interface:
+
+```
+python run_simulation.py --nem12-file path/to/nem12file.csv --state SA --network sapn --tariff SBTOUE --battery-size 40000 --inverter-size 25000 --battery-cost 23000 --inverter-cost 8000 --compare-bill 2770 --start-date 2024-02-21 --end-date 2024-03-20
+```
+
+Replace the argument values with your specific scenario details.
+
+### As a Python Module
+
+You can also use the Inverter Simulator as a module in your Python scripts:
+
+```python
+from inverter_simulator.simulator import InverterSimulator
+from inverterintelligence.price_actions import undersized_system_action
+from inverterintelligence.aemo import format_nem12_file
+
+# Set up your parameters
+params = {
+    'battery_size': 40000,
+    'inverter_size': 25000,
+    'battery_cost': 23000,
+    'inverter_cost': 8000,
+    'compare_bill': 2770,
+    'start_date': '2024-02-21',
+    'end_date': '2024-03-20',
+    'state': 'SA',
+    'network': 'sapn',
+    'tariff': 'SBTOUE',
+    'csv_file': 'path/to/nem12file.csv'
+}
+
+# Run the simulation
+results = run_simulations(**params)
+```
+
+## Configuration
+
+The simulator supports various configuration options:
+
+- `battery_size`: Size of each battery unit in Wh
+- `inverter_size`: Size of each inverter unit in W
+- `battery_cost`: Cost of each battery unit
+- `inverter_cost`: Cost of each inverter unit
+- `compare_bill`: The current energy bill to compare against
+- `start_date` and `end_date`: The date range for the simulation
+- `state`, `network`, and `tariff`: Location and pricing information
+
+## Output
+
+The simulator generates a CSV file containing the simulation results, including:
+
+- Number of batteries and inverters in each configuration
+- Simulated bill amount
+- Estimated lease payment
+- Potential savings
+
+## Contributing
+
+Contributions to the Inverter Simulator project are welcome! Please follow these steps to contribute:
+
+1. Fork the repository
+2. Create a new branch for your feature
+3. Commit your changes
+4. Push to your fork
+5. Submit a pull request
+
+## License
+
+MIT License
+
+## Contact
+
+For questions or support, please contact Ian Connor at ian@powston.com

@@ -9,11 +9,11 @@ class TestInverterSimulator(unittest.TestCase):
 
     def setUp(self):
         self.mock_system = pd.DataFrame({
-            'house_power': [1000, 2000, 3000],
+            'house_power': [4000, 2000, 3000],
             'solar_power': [2000, 3000, 4000],
-            'buy_price': [20, 30, 40],
-            'sell_price': [10, 20, 30],
-            'rrp': [100, 200, 300],
+            'buy_price': [16, 16, 16],
+            'sell_price': [6, 6, 6],
+            'rrp': [60, 60, 60],
             'forecast': [[100, 200, 300], [200, 300, 400], [300, 400, 500]]
         }, index=[datetime(2023, 1, 1) + timedelta(hours=i) for i in range(3)])
         
@@ -24,7 +24,7 @@ class TestInverterSimulator(unittest.TestCase):
         self.assertIsInstance(self.simulator.battery, Battery)
         self.assertEqual(self.simulator.battery.capacity, 10000)
         self.assertEqual(self.simulator.battery.charge_rate, 4600)
-        self.assertEqual(self.simulator.grid_limit, 6000)
+        self.assertEqual(self.simulator.grid_limit, 8000)
 
     def test_reset(self):
         self.simulator.battery.charge = 8000
@@ -51,9 +51,51 @@ class TestInverterSimulator(unittest.TestCase):
         self.simulator.apply_action('test_action')
         mock_process_interval.assert_called_once()
         self.assertEqual(self.simulator.current_interval, initial_interval + timedelta(minutes=self.simulator.interval))
+ 
 
-    def test_process_interval(self):
+    def test_process_charge_interval(self):
         index = self.simulator.system.index[0]
+        
+        self.assertEqual(0, self.simulator.grid_power)
+        row = self.simulator.system.loc[index]
+        self.simulator._process_interval(index, row, 'charge', 'always charge')
+        self.assertEqual(len(self.simulator.solar_powers), 1)
+        self.assertEqual(len(self.simulator.charges), 1)
+        self.assertEqual(len(self.simulator.discharges), 1)
+        self.assertEqual(len(self.simulator.battery_charges), 1)
+        self.assertEqual(len(self.simulator.actions), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(-2000, self.simulator.grid_power)
+        
+        index = self.simulator.system.index[1]
+        row = self.simulator.system.loc[index]
+        row = self.simulator.system.loc[index]
+        self.simulator._process_interval(index, row, 'charge', 'always charge')
+        self.assertEqual(0, self.simulator.grid_power)
+        self.assertAlmostEqual(5000 + (1000 / 12 * 0.95), self.simulator.battery.charge, 2)
+
+    def test_process_discharge_interval(self):
+        index = self.simulator.system.index[0]
+        
+        self.assertEqual(0, self.simulator.grid_power)
+        row = self.simulator.system.loc[index]
+        self.simulator._process_interval(index, row, 'discharge', 'always discharge')
+        self.assertEqual(len(self.simulator.solar_powers), 1)
+        self.assertEqual(len(self.simulator.charges), 1)
+        self.assertEqual(len(self.simulator.discharges), 1)
+        self.assertEqual(len(self.simulator.battery_charges), 1)
+        self.assertEqual(len(self.simulator.actions), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(0, self.simulator.grid_power)      
+
+
+
+    def test_process_auto_interval(self):
+        index = self.simulator.system.index[0]
+        
+        self.assertEqual(0, self.simulator.grid_power)
         row = self.simulator.system.loc[index]
         self.simulator._process_interval(index, row, 'auto', 'always auto')
         self.assertEqual(len(self.simulator.solar_powers), 1)
@@ -62,6 +104,38 @@ class TestInverterSimulator(unittest.TestCase):
         self.assertEqual(len(self.simulator.battery_charges), 1)
         self.assertEqual(len(self.simulator.actions), 1)
         self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(0, self.simulator.grid_power)
+  
+    def test_process_import_interval(self):
+        index = self.simulator.system.index[0]
+        
+        self.assertEqual(0, self.simulator.grid_power)
+        row = self.simulator.system.loc[index]
+        self.simulator._process_interval(index, row, 'import', 'always import')
+        self.assertEqual(len(self.simulator.solar_powers), 1)
+        self.assertEqual(len(self.simulator.charges), 1)
+        self.assertEqual(len(self.simulator.discharges), 1)
+        self.assertEqual(len(self.simulator.battery_charges), 1)
+        self.assertEqual(len(self.simulator.actions), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(-6600, self.simulator.grid_power)      
+
+    def test_process_export_interval(self):
+        index = self.simulator.system.index[0]
+        
+        self.assertEqual(0, self.simulator.grid_power)
+        row = self.simulator.system.loc[index]
+        self.simulator._process_interval(index, row, 'export', 'always export')
+        self.assertEqual(len(self.simulator.solar_powers), 1)
+        self.assertEqual(len(self.simulator.charges), 1)
+        self.assertEqual(len(self.simulator.discharges), 1)
+        self.assertEqual(len(self.simulator.battery_charges), 1)
+        self.assertEqual(len(self.simulator.actions), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(2600, self.simulator.grid_power)
 
     def test_calculate_charge_discharge(self):
         test_cases = [

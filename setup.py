@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="inverter_simulator",
-    version="0.1.1",
+    version="0.1.2",
     author="Ian Connor",
     author_email="ian@powston.com",
     description="A simulator for inverter systems with battery storage",

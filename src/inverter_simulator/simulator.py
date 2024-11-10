@@ -178,7 +178,6 @@ class InverterSimulator:
             params = self.get_state()
             if 'interval_time' in params:
                 del params['interval_time']
-            print('params', params)
             self._process_interval(index, row, *self.control_function(index, **params))
         self._calculate_final_metrics()
         return self.algo_sim_usage, self.system

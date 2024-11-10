@@ -67,7 +67,8 @@ class InverterSimulator:
         return self._create_state_dict(row)
 
     def _create_state_dict(self, row: pd.Series) -> dict:
-        return {
+        state_dict = row.to_dict()
+        state_dict.update({
             'battery_charge': self.battery.charge,
             'battery_soc': self.battery.soc,
             'solar_power': row['solar_power'],
@@ -87,7 +88,8 @@ class InverterSimulator:
             'spot_to_tariff': self.spot_to_tariff,
             'spot_to_feed_in_tariff': self.spot_to_feed_in_tariff,
             'sim_cost': self.algo_sim_usage
-        }
+        })
+        return state_dict
 
     def apply_action(self, inverter_action: str) -> None:
         row = self.system.loc[self.current_interval]
@@ -111,7 +113,6 @@ class InverterSimulator:
             sell_price = self.spot_to_feed_in_tariff(row['forecast'])
         else:
             sell_price = row['sell_price']
-        
         return row['house_power'], row['solar_power'], buy_price, sell_price
 
     def _calculate_charge_discharge(self, action: str, balance: float) -> Tuple[float, float]:
@@ -139,6 +140,10 @@ class InverterSimulator:
         else:
             print('Invalid action', action)
             charge = discharge = 0
+        assert charge >= 0, f'Charge is negative: {charge}'
+        assert discharge >= 0, f'Discharge is negative: {discharge}'
+        assert charge <= self.battery.charge_rate, f'Charge is greater than charge rate: {charge}'
+        assert discharge <= self.battery.charge_rate, f'Discharge is greater than charge rate: {discharge}'
         return charge, discharge
 
     def _update_simulation_data(self, action: str, reason: str, solar_power: float, charge: float, discharge: float,
@@ -171,6 +176,9 @@ class InverterSimulator:
         for index, row in self.system.iterrows():
             self.current_interval = index
             params = self.get_state()
+            if 'interval_time' in params:
+                del params['interval_time']
+            print('params', params)
             self._process_interval(index, row, *self.control_function(index, **params))
         self._calculate_final_metrics()
         return self.algo_sim_usage, self.system
@@ -189,8 +197,9 @@ class InverterSimulator:
         self.system['Power from grid'] = self.power_from_grid
         self.system['Power to grid'] = self.power_to_grid
         self.system['Energy from grid'] = self.system['Power from grid'] * self.interval / 60
-        self.system['Energy to grid'] = self.system['Power to grid'] * self.interval  / 60
+        self.system['Energy to grid'] = self.system['Power to grid'] * self.interval / 60
         self.algo_sim_usage = self.system['sim_cost'].sum()
+
 
 def sim_inverter(system: pd.DataFrame, control_function: Callable, **kwargs: Any) -> Tuple[float, pd.DataFrame]:
     sim = InverterSimulator(system, control_function, **kwargs)

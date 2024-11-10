@@ -23,14 +23,14 @@ class InverterSimulator:
 
         self.grid_limit = kwargs.get('grid_limit', self._calculate_grid_limit())
         self.tariff = kwargs.get('tariff', '6900')
-        self.network = kwargs.get('network', 'Energex')
+        self.network = kwargs.get('network', 'energex')
         self.state = kwargs.get('state', 'QLD')
         self.max_ppv_power = kwargs.get('max_ppv_power', 5000)
         self.interval = kwargs.get('interval', 5)
         self.timezone_str = kwargs.get('timezone_str', 'Australia/Brisbane')
         self.latitude = kwargs.get('latitude', None)
         self.longitude = kwargs.get('longitude', None)
-        self.spot_to_tariff = kwargs.get('spot_to_tariff', lambda x: x[1] / 10)
+        self.spot_to_tariff = kwargs.get('spot_to_tariff', lambda x, y, z, a: a / 10)
         self.spot_to_feed_in_tariff = kwargs.get('spot_to_feed_in_tariff', lambda x: x / 10)
         if 'sim_cost' not in self.system.columns:
             self.system['sim_cost'] = 0.0
@@ -178,6 +178,10 @@ class InverterSimulator:
             params = self.get_state()
             if 'interval_time' in params:
                 del params['interval_time']
+            if 'buy_forecast' not in params:
+                params['buy_forecast'] = [self.spot_to_tariff(index, self.network, self.tariff, f) for f in row['forecast']]
+            if 'sell_forecast' not in params:
+                params['sell_forecast'] = [self.spot_to_feed_in_tariff(f) for f in row['forecast']]
             self._process_interval(index, row, *self.control_function(index, **params))
         self._calculate_final_metrics()
         return self.algo_sim_usage, self.system

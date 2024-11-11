@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: inverter_simulator
-Version: 0.1.0
+Version: 0.1.2
 Summary: A simulator for inverter systems with battery storage
 Home-page: https://github.com/powston/inverter_simulator
 Author: Ian Connor

@@ -12,7 +12,7 @@ class Battery:
     def charge_battery(self, amount: float, interval: int = 5) -> float:
         per_hour = 60 / interval
         charge_ability = min(self.charge_rate, max(0, self.capacity - self.charge) * per_hour)
-        actual_charge = min(amount, charge_ability)
+        actual_charge = max(0, min(amount, charge_ability))
         charge_minus_loss = actual_charge * ((100 - self.loss_rate) / 100)
         self.charge = min(self.capacity, self.charge + (charge_minus_loss / 12))
         return actual_charge
@@ -20,7 +20,7 @@ class Battery:
     def discharge_battery(self, amount: float, interval: int = 5) -> float:
         per_hour = 60 / interval
         discharge_ability = min(self.charge_rate, max(0, self.charge) * per_hour)
-        actual_discharge = min(amount, discharge_ability)
+        actual_discharge = max(0, min(amount, discharge_ability))
         discharge_plus_loss = actual_discharge * ((100 + self.loss_rate) / 100)
         self.charge = max(0, self.charge - (discharge_plus_loss / 12))
         return actual_discharge

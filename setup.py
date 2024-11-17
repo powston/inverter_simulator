@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="inverter_simulator",
-    version="0.1.3",
+    version="0.1.4",
     author="Ian Connor",
     author_email="ian@powston.com",
     description="A simulator for inverter systems with battery storage",
@@ -28,6 +28,7 @@ setup(
     install_requires=[
         "pandas>=1.0.0",
         "numpy>=1.18.0",
+        "astral>=3.2"
     ],
     extras_require={
         "dev": [

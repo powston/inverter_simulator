@@ -1,7 +1,10 @@
 import pandas as pd
 from typing import Any, Tuple, Callable
 import logging
+from astral import LocationInfo
+from astral.sun import sun
 from inverter_simulator.battery import Battery
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +33,9 @@ class InverterSimulator:
         self.max_ppv_power = kwargs.get('max_ppv_power', 5000)
         self.interval = kwargs.get('interval', 5)
         self.timezone_str = kwargs.get('timezone_str', 'Australia/Brisbane')
-        self.latitude = kwargs.get('latitude', None)
-        self.longitude = kwargs.get('longitude', None)
+        self.location = kwargs.get('location', 'Brisbane')
+        self.latitude = kwargs.get('latitude', -27.4698)
+        self.longitude = kwargs.get('longitude', 153.0251)
         self.spot_to_tariff = kwargs.get('spot_to_tariff', lambda x, y, z, a: a / 10)
         self.spot_to_feed_in_tariff = kwargs.get('spot_to_feed_in_tariff', lambda x: x / 10)
         if 'sim_cost' not in self.system.columns:
@@ -70,6 +74,12 @@ class InverterSimulator:
 
     def _create_state_dict(self, row: pd.Series) -> dict:
         state_dict = row.to_dict()
+        location = LocationInfo(name=self.location, region=self.state, timezone=self.timezone_str,
+                                    latitude=self.latitude, longitude=self.longitude)
+        # Calculate sunrise and sunset times
+        s = sun(location.observer, date=self.current_interval.date())
+        sunrise = s['sunrise']
+        sunset = s['sunset']
         state_dict.update({
             'battery_charge': self.battery.charge,
             'battery_soc': self.battery.soc,
@@ -83,6 +93,9 @@ class InverterSimulator:
             'timezone_str': self.timezone_str,
             'latitude': self.latitude,
             'longitude': self.longitude,
+            'sunrise': sunrise.astimezone(ZoneInfo(self.timezone_str)),
+            'sunset': sunset.astimezone(ZoneInfo(self.timezone_str)),
+            'location': location,
             'spot_to_tariff': self.spot_to_tariff,
             'spot_to_feed_in_tariff': self.spot_to_feed_in_tariff,
             'sim_cost': self.algo_sim_usage

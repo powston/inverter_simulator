@@ -10,6 +10,8 @@ class InverterSimulator:
 
     def __init__(self, system: pd.DataFrame, control_function: Callable, **kwargs: Any):
         self.system = system
+        # remove duplcates and keep the last value
+        self.system = self.system[~self.system.index.duplicated(keep='last')]
         self.control_function = control_function
         self._init_parameters(kwargs)
         self._init_simulation_data()
@@ -63,7 +65,7 @@ class InverterSimulator:
         return self.current_interval == self.system.index[-1]
 
     def get_state(self) -> dict:
-        row = self.system.loc[self.current_interval]
+        row = self.system.loc[self.current_interval].copy()
         return self._create_state_dict(row)
 
     def _create_state_dict(self, row: pd.Series) -> dict:
@@ -71,10 +73,6 @@ class InverterSimulator:
         state_dict.update({
             'battery_charge': self.battery.charge,
             'battery_soc': self.battery.soc,
-            'solar_power': row['solar_power'],
-            'house_power': row['house_power'],
-            'rrp': row['rrp'],
-            'forecast': row['forecast'],
             'interval': self.interval,
             'current_interval': self.current_interval,
             'grid_limit': self.grid_limit,

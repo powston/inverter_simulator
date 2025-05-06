@@ -116,6 +116,8 @@ class InverterSimulator:
         return row['house_power'], row['solar_power'], buy_price, sell_price
 
     def _calculate_charge_discharge(self, action: str, balance: float) -> Tuple[float, float]:
+        if '-' in action:
+            action = action.split('-')[0]
         if action == 'charge':
             charge = self.battery.charge_battery(balance, self.interval)
             discharge = 0

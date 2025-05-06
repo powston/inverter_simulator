@@ -18,7 +18,7 @@ class TestInverterSimulator(unittest.TestCase):
         }, index=[datetime(2023, 1, 1) + timedelta(hours=i) for i in range(3)])
         
         self.mock_control_function = Mock(return_value=['auto', 'always auto'])
-        self.simulator = InverterSimulator(self.mock_system, self.mock_control_function)
+        self.simulator = InverterSimulator(self.mock_system, self.mock_control_function, min_soc=0)
 
     def test_initialization(self):
         self.assertIsInstance(self.simulator.battery, Battery)

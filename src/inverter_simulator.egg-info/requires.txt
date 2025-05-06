@@ -1,5 +1,6 @@
 pandas>=1.0.0
 numpy>=1.18.0
+astral>=3.2
 
 [dev]
 pytest>=6.0

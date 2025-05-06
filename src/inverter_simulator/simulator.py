@@ -24,7 +24,9 @@ class InverterSimulator:
         charge_rate = kwargs.get('charge_rate', 4600)
         initial_charge = kwargs.get('battery_charge', battery_capacity / 2)
         battery_loss = kwargs.get('battery_loss', 5)
-        self.battery = Battery(battery_capacity, charge_rate, initial_charge, battery_loss)
+        self.min_soc = kwargs.get('min_soc', 10)
+        self.battery = Battery(capacity=battery_capacity, charge_rate=charge_rate, min_soc=self.min_soc,
+                               initial_charge=initial_charge, loss_rate=battery_loss)
 
         self.grid_limit = kwargs.get('grid_limit', self._calculate_grid_limit())
         self.tariff = kwargs.get('tariff', '6900')
@@ -36,6 +38,7 @@ class InverterSimulator:
         self.location = kwargs.get('location', 'Brisbane')
         self.latitude = kwargs.get('latitude', -27.4698)
         self.longitude = kwargs.get('longitude', 153.0251)
+        self.daily_fee = kwargs.get('daily_fee', 1)
         self.spot_to_tariff = kwargs.get('spot_to_tariff', lambda x, y, z, a: a / 10)
         self.spot_to_feed_in_tariff = kwargs.get('spot_to_feed_in_tariff', lambda x: x / 10)
         if 'sim_cost' not in self.system.columns:
@@ -57,6 +60,8 @@ class InverterSimulator:
         self.sim_costs = []
         self.power_from_grid = []
         self.power_to_grid = []
+        self.start_battery_soc = []
+        self.cloud_cover = []
 
     def _calculate_grid_limit(self) -> int:
         return self.system['house_power'].max() * 2
@@ -95,6 +100,11 @@ class InverterSimulator:
             'longitude': self.longitude,
             'sunrise': sunrise.astimezone(ZoneInfo(self.timezone_str)),
             'sunset': sunset.astimezone(ZoneInfo(self.timezone_str)),
+            'cloud_cover': row.get('cloud_cover', 0),
+            'site_statistics': row.get('site_statistics', {}),
+            'weather_data': row.get('weather_data', {}),
+            'buy_forecast': row.get('buy_forecast', []),
+            'sell_forecast': row.get('sell_forecast', []),
             'location': location,
             'spot_to_tariff': self.spot_to_tariff,
             'spot_to_feed_in_tariff': self.spot_to_feed_in_tariff,
@@ -104,15 +114,19 @@ class InverterSimulator:
 
     def apply_action(self, inverter_action: str) -> None:
         row = self.system.loc[self.current_interval]
+        if inverter_action is None:
+            inverter_action = 'auto'
+        if '-' in inverter_action:
+            inverter_action, reason = inverter_action.split('-')
         self._process_interval(self.current_interval, row, inverter_action)
         self.current_interval += pd.Timedelta(minutes=self.interval)
 
     def _process_interval(self, index: pd.Timestamp, row: pd.Series, action: str, reason: str) -> None:
-        house_power, solar_power, buy_price, sell_price = self._get_params(index, row)
+        house_power, solar_power, buy_price, sell_price, start_battery_soc, cloud_cover = self._get_params(index, row)
         balance = solar_power - house_power
         charge, discharge = self._calculate_charge_discharge(action, balance)  # This is in Wh
         # print(action, 'charge', charge, 'discharge', discharge, house_power, balance, self.battery.charge, self.battery.soc, self.battery.charge_rate)
-        self._update_simulation_data(action, reason, solar_power, charge, discharge, house_power, buy_price, sell_price)
+        self._update_simulation_data(action, reason, solar_power, charge, discharge, house_power, buy_price, sell_price, start_battery_soc, cloud_cover)
 
     def _get_params(self, index: pd.Timestamp, row: pd.Series) -> Tuple[float, float, float]:
         if 'buy_price' not in row:
@@ -124,24 +138,33 @@ class InverterSimulator:
             sell_price = self.spot_to_feed_in_tariff(row['forecast'])
         else:
             sell_price = row['sell_price']
-        return row['house_power'], row['solar_power'], buy_price, sell_price
+        start_battery_soc = 0
+        if 'start_battery_soc' in row:
+            start_battery_soc = row['start_battery_soc']
+        cloud_cover = row.get('cloud_cover', 0)
+        return row['house_power'], row['solar_power'], buy_price, sell_price, start_battery_soc, cloud_cover
 
     def _calculate_charge_discharge(self, action: str, balance: float) -> Tuple[float, float]:
+        if action is None:
+            action = 'auto'
+        action = str(action).lower()
+        if '-' in action:
+            action = action.split('-')[0]
         if action == 'charge':
             charge = self.battery.charge_battery(balance, self.interval)
             discharge = 0
         elif action == 'discharge':
             charge = 0
             discharge = self.battery.discharge_battery(-balance, self.interval)
-        elif action == 'auto':
+        elif action == 'stopped':
+            charge = discharge = 0
+        elif action == 'export200':
             if balance > 0:
                 charge = self.battery.charge_battery(balance, self.interval)
                 discharge = 0
             else:
                 charge = 0
-                discharge = self.battery.discharge_battery(-balance, self.interval)
-        elif action == 'stopped':
-            charge = discharge = 0
+                discharge = self.battery.discharge_battery(-balance, self.interval) + 200
         elif action == 'export':
             charge = 0
             discharge = self.battery.discharge_battery(self.battery.charge_rate, self.interval)
@@ -149,20 +172,28 @@ class InverterSimulator:
             charge = self.battery.charge_battery(self.battery.charge_rate, self.interval)
             discharge = 0
         else:
-            print('Invalid action', action)
-            charge = discharge = 0
+            if action != 'auto':
+                print('Invalid action: using auto:', action)
+            if balance > 0:
+                charge = self.battery.charge_battery(balance, self.interval)
+                discharge = 0
+            else:
+                charge = 0
+                discharge = self.battery.discharge_battery(-balance, self.interval)
+
         assert charge >= 0, f'Charge is negative: {charge}'
         assert discharge >= 0, f'Discharge is negative: {discharge}'
         assert charge <= self.battery.charge_rate, f'Charge is greater than charge rate: {charge}'
         assert discharge <= self.battery.charge_rate, f'Discharge is greater than charge rate: {discharge}'
         return charge, discharge
 
-    def _update_simulation_data(self, action: str, reason: str, solar_power: float, charge: float, discharge: float,
-                                house_power: float, buy_price: float, sell_price: float) -> None:
+    def _update_simulation_data(self, action: str, reason: str, solar_power: float, charge: float, discharge: float, house_power: float,
+                                buy_price: float, sell_price: float, start_battery_soc: float, cloud_cover: float) -> None:
         self.solar_powers.append(solar_power)
         self.charges.append(charge)
         self.discharges.append(discharge)
         self.battery_charges.append(self.battery.charge)
+        self.cloud_cover.append(cloud_cover)
         self.battery_socs.append(self.battery.soc)
         self.actions.append(action)
         self.reasons.append(reason)
@@ -181,6 +212,7 @@ class InverterSimulator:
             self.power_from_grid.append(0)
             self.power_to_grid.append(kwh_balance)
             self.last_cost = -sell_price * kwh_balance
+        self.last_cost += self.daily_fee / 288
         self.sim_costs.append(self.last_cost)
 
     def run_simulation(self) -> Tuple[float, pd.DataFrame]:

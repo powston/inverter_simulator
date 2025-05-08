@@ -203,7 +203,7 @@ class InverterSimulator:
         self.grid_power = balance
         self.balances.append(balance)
 
-        kwh_balance = balance / 12000
+        kwh_balance = balance * (self.interval / 60) / 1000
         if kwh_balance < 0:
             self.power_from_grid.append(-kwh_balance)
             self.power_to_grid.append(0)

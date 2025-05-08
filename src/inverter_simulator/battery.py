@@ -1,11 +1,13 @@
 class Battery:
-    def __init__(self, capacity: float = 5000, charge_rate: float = 5000, initial_charge: float = None, loss_rate: float = 5, min_soc: int = 10) -> None:
+    def __init__(self, capacity: float = 5000, charge_rate: float = 5000, initial_charge: float = None,
+                 loss_rate: float = 5, min_soc: int = 10, interval: int = 5) -> None:
         self.capacity = capacity
         self.charge_rate = charge_rate
         self.charge = initial_charge if initial_charge is not None else capacity / 2
         self.loss_rate = loss_rate
         self.min_soc = min_soc
         self.min_charge = (self.min_soc / 100) * self.capacity
+        self.interval = interval
 
     @property
     def soc(self) -> float:

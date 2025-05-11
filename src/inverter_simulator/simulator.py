@@ -33,7 +33,8 @@ class InverterSimulator:
         self.network = kwargs.get('network', 'energex')
         self.state = kwargs.get('state', 'QLD')
         self.max_ppv_power = kwargs.get('max_ppv_power', 5000)
-        self.interval = kwargs.get('interval', 5)
+        self.interval = kwargs.get('interval', self.DEFAULT_INTERVAL)
+        logging.info(f'Interval: {self.interval}')
         self.timezone_str = kwargs.get('timezone_str', 'Australia/Brisbane')
         self.location = kwargs.get('location', 'Brisbane')
         self.latitude = kwargs.get('latitude', -27.4698)
@@ -61,7 +62,7 @@ class InverterSimulator:
         self.power_from_grid = []
         self.power_to_grid = []
         self.start_battery_soc = []
-        self.cloud_cover = []
+        self.feed_in_power_limitation = []
 
     def _calculate_grid_limit(self) -> int:
         return self.system['house_power'].max() * 2
@@ -100,7 +101,7 @@ class InverterSimulator:
             'longitude': self.longitude,
             'sunrise': sunrise.astimezone(ZoneInfo(self.timezone_str)),
             'sunset': sunset.astimezone(ZoneInfo(self.timezone_str)),
-            'cloud_cover': row.get('cloud_cover', 0),
+            'feed_in_power_limitation': row.get('feed_in_power_limitation', 0),
             'site_statistics': row.get('site_statistics', {}),
             'weather_data': row.get('weather_data', {}),
             'buy_forecast': row.get('buy_forecast', []),
@@ -122,11 +123,13 @@ class InverterSimulator:
         self.current_interval += pd.Timedelta(minutes=self.interval)
 
     def _process_interval(self, index: pd.Timestamp, row: pd.Series, action: str, reason: str) -> None:
-        house_power, solar_power, buy_price, sell_price, start_battery_soc, cloud_cover = self._get_params(index, row)
+        house_power, solar_power, buy_price, sell_price, start_battery_soc, feed_in_power_limitation = self._get_params(index, row)
         balance = solar_power - house_power
+        if balance > feed_in_power_limitation:
+            balance = feed_in_power_limitation
         charge, discharge = self._calculate_charge_discharge(action, balance)  # This is in Wh
         # print(action, 'charge', charge, 'discharge', discharge, house_power, balance, self.battery.charge, self.battery.soc, self.battery.charge_rate)
-        self._update_simulation_data(action, reason, solar_power, charge, discharge, house_power, buy_price, sell_price, start_battery_soc, cloud_cover)
+        self._update_simulation_data(action, reason, solar_power, charge, discharge, house_power, buy_price, sell_price, start_battery_soc, feed_in_power_limitation)
 
     def _get_params(self, index: pd.Timestamp, row: pd.Series) -> Tuple[float, float, float]:
         if 'buy_price' not in row:
@@ -141,8 +144,8 @@ class InverterSimulator:
         start_battery_soc = 0
         if 'start_battery_soc' in row:
             start_battery_soc = row['start_battery_soc']
-        cloud_cover = row.get('cloud_cover', 0)
-        return row['house_power'], row['solar_power'], buy_price, sell_price, start_battery_soc, cloud_cover
+        feed_in_power_limitation = row.get('feed_in_power_limitation', 0)
+        return row['house_power'], row['solar_power'], buy_price, sell_price, start_battery_soc, feed_in_power_limitation
 
     def _calculate_charge_discharge(self, action: str, balance: float) -> Tuple[float, float]:
         if action is None:
@@ -188,12 +191,12 @@ class InverterSimulator:
         return charge, discharge
 
     def _update_simulation_data(self, action: str, reason: str, solar_power: float, charge: float, discharge: float, house_power: float,
-                                buy_price: float, sell_price: float, start_battery_soc: float, cloud_cover: float) -> None:
+                                buy_price: float, sell_price: float, start_battery_soc: float, feed_in_power_limitation: float) -> None:
         self.solar_powers.append(solar_power)
         self.charges.append(charge)
         self.discharges.append(discharge)
         self.battery_charges.append(self.battery.charge)
-        self.cloud_cover.append(cloud_cover)
+        self.feed_in_power_limitation.append(feed_in_power_limitation)
         self.battery_socs.append(self.battery.soc)
         self.actions.append(action)
         self.reasons.append(reason)
@@ -212,7 +215,7 @@ class InverterSimulator:
             self.power_from_grid.append(0)
             self.power_to_grid.append(kwh_balance)
             self.last_cost = -sell_price * kwh_balance
-        self.last_cost += self.daily_fee / 288
+        self.last_cost += self.daily_fee / (60 * 24 / self.interval)
         self.sim_costs.append(self.last_cost)
 
     def run_simulation(self) -> Tuple[float, pd.DataFrame]:

@@ -3,6 +3,9 @@ class Battery:
                  loss_rate: float = 5, min_soc: int = 10, interval: int = 5) -> None:
         self.capacity = capacity
         self.charge_rate = charge_rate
+        self.discharge_rate = charge_rate
+        self.max_charge_rate = charge_rate
+        self.max_discharge_rate = charge_rate
         self.charge = initial_charge if initial_charge is not None else capacity / 2
         self.loss_rate = loss_rate
         self.min_soc = min_soc
@@ -19,15 +22,23 @@ class Battery:
         actual_charge = max(0, min(amount, charge_ability))
         charge_minus_loss = actual_charge * ((100 - self.loss_rate) / 100)
         self.charge = min(self.capacity, self.charge + (charge_minus_loss / 12))
+        # print(f'Charging battery: {actual_charge}W, new charge: {self.charge}Wh')
         return actual_charge
 
-    def discharge_battery(self, amount: float, interval: int = 5) -> float:
+    def discharge_ability(self, interval: int = 5) -> float:
         per_hour = 60 / interval
-        if self.charge_rate is None or self.charge is None:
-            print(self.charge_rate, self.charge)
+        return min(self.discharge_rate, max(0, self.charge - self.min_charge) * per_hour)
+
+    def discharge_battery(self, amount: float, interval: int = 5, feed_in_power_limitation=None) -> float:
+        if self.discharge_rate is None or self.charge is None:
+            print(self.discharge_rate, self.charge)
             raise ValueError("Charge rate and charge must be set to discharge")
-        discharge_ability = min(self.charge_rate, max(0, self.charge - self.min_charge) * per_hour)
+        discharge_ability = self.discharge_ability(interval)
+        if feed_in_power_limitation is not None and feed_in_power_limitation < amount:
+            discharge_ability = min(self.discharge_ability(interval), feed_in_power_limitation)
+            # print('discharge_ability:', discharge_ability, 'feed_in_power_limitation:', feed_in_power_limitation, 'amount:', amount)
         actual_discharge = max(0, min(amount, discharge_ability))
+        # print('actual_discharge:', actual_discharge, 'discharge_ability:', discharge_ability, 'amount:', amount, 'feed_in_power_limitation', feed_in_power_limitation)
         discharge_plus_loss = actual_discharge * ((100 + self.loss_rate) / 100)
         self.charge = max(0, self.charge - (discharge_plus_loss / 12))
         return actual_discharge

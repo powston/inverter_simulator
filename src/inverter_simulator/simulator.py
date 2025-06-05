@@ -34,7 +34,6 @@ class InverterSimulator:
         self.state = kwargs.get('state', 'QLD')
         self.max_ppv_power = kwargs.get('max_ppv_power', 5000)
         self.interval = kwargs.get('interval', self.DEFAULT_INTERVAL)
-        logging.info(f'Interval: {self.interval}')
         self.timezone_str = kwargs.get('timezone_str', 'Australia/Brisbane')
         self.location = kwargs.get('location', 'Brisbane')
         self.latitude = kwargs.get('latitude', -27.4698)
@@ -60,9 +59,13 @@ class InverterSimulator:
         self.balances = []
         self.sim_costs = []
         self.power_from_grid = []
+        self.energy_from_grid = []
+        self.energy_to_grid = []
         self.power_to_grid = []
         self.start_battery_soc = []
         self.feed_in_power_limitation = []
+        self.solar_curtailed = []
+        self.params = []
 
     def _calculate_grid_limit(self) -> int:
         return self.system['house_power'].max() * 2
@@ -122,14 +125,36 @@ class InverterSimulator:
         self._process_interval(self.current_interval, row, inverter_action)
         self.current_interval += pd.Timedelta(minutes=self.interval)
 
-    def _process_interval(self, index: pd.Timestamp, row: pd.Series, action: str, reason: str) -> None:
-        house_power, solar_power, buy_price, sell_price, start_battery_soc, feed_in_power_limitation = self._get_params(index, row)
-        balance = solar_power - house_power
-        if balance > feed_in_power_limitation:
-            balance = feed_in_power_limitation
-        charge, discharge = self._calculate_charge_discharge(action, balance)  # This is in Wh
-        # print(action, 'charge', charge, 'discharge', discharge, house_power, balance, self.battery.charge, self.battery.soc, self.battery.charge_rate)
-        self._update_simulation_data(action, reason, solar_power, charge, discharge, house_power, buy_price, sell_price, start_battery_soc, feed_in_power_limitation)
+    def _process_interval(self, index: pd.Timestamp, row: pd.Series, action: str, reason: str, params={}) -> None:
+        house_power, solar_power, buy_price, sell_price, start_battery_soc = self._get_params(index, row)
+        feed_in_power_limitation = params.get('feed_in_power_limitation', None)
+        solar_curtailed = 0
+        _balance = solar_power - house_power
+        show_debug = False
+        # if index == pd.Timestamp('2025-03-30 22:40:00+11:00'):
+        #     show_debug = True
+        #     print('Processing interval:', index, 'action:', action, 'reason:', reason, 'balance:', _balance,
+        #           'house_power:', house_power, 'solar_power:', solar_power, 'buy_price:', buy_price,
+        #           'sell_price:', sell_price, 'start_battery_soc:', start_battery_soc,)
+        charge, discharge = self._calculate_charge_discharge(action, _balance, params=params, show_debug=show_debug)  # This is in Wh
+        expected_grid_power = discharge - charge + solar_power - house_power  # This is in W
+        # if index == pd.Timestamp('2025-03-30 22:40:00+11:00'):
+        #     print('params:', params)
+        #     print('expected_grid_power', expected_grid_power, 'feed_in_power_limitation', feed_in_power_limitation, 'balance:', _balance)
+        #     print('charge', charge, 'discharge', discharge, 'solar_power',solar_power, 'house_power',house_power)
+        if feed_in_power_limitation is not None and expected_grid_power > feed_in_power_limitation:
+            curtail_needed = expected_grid_power + feed_in_power_limitation
+            # if index == pd.Timestamp('2025-03-30 22:40:00+11:00'):
+            #     logger.info(f'Curtail needed: {curtail_needed} solar_power: {solar_power}') 
+            if curtail_needed > solar_power:
+                solar_curtailed = solar_power
+                solar_power = 0
+            else:
+                solar_curtailed = curtail_needed
+                solar_power -= curtail_needed
+        # if index == pd.Timestamp('2025-03-30 22:40:00+11:00'):
+        #     logger.info(f'Processing interval: {index}, action: {action}, reason: {reason}, balance: {_balance}, house_power: {house_power}, solar_curtailed: {solar_curtailed} solar_power: {solar_power}, buy_price: {buy_price}, feed_in_power_limitation: {feed_in_power_limitation}, charge: {charge}, discharge: {discharge}')
+        self._update_simulation_data(action, reason, solar_power, charge, discharge, house_power, buy_price, sell_price, start_battery_soc, feed_in_power_limitation, solar_curtailed, params)
 
     def _get_params(self, index: pd.Timestamp, row: pd.Series) -> Tuple[float, float, float]:
         if 'buy_price' not in row:
@@ -144,10 +169,16 @@ class InverterSimulator:
         start_battery_soc = 0
         if 'start_battery_soc' in row:
             start_battery_soc = row['start_battery_soc']
-        feed_in_power_limitation = row.get('feed_in_power_limitation', 0)
-        return row['house_power'], row['solar_power'], buy_price, sell_price, start_battery_soc, feed_in_power_limitation
+        return row['house_power'], row['solar_power'], buy_price, sell_price, start_battery_soc
 
-    def _calculate_charge_discharge(self, action: str, balance: float) -> Tuple[float, float]:
+    def _calculate_charge_discharge(self, action: str, balance: float, params={}, show_debug=False) -> Tuple[float, float]:
+        feed_in_power_limitation = params.get('feed_in_power_limitation', None)
+        optimal_charging = params.get('optimal_charging', None)
+        optimal_discharging = params.get('optimal_discharging', None)
+        if optimal_charging is not None:
+            self.battery.charge_rate = min(optimal_charging, self.battery.max_charge_rate)
+        if optimal_discharging is not None:
+            self.battery.discharge_rate = min(optimal_discharging, self.battery.max_discharge_rate)
         if action is None:
             action = 'auto'
         action = str(action).lower()
@@ -158,21 +189,37 @@ class InverterSimulator:
             discharge = 0
         elif action == 'discharge':
             charge = 0
-            discharge = self.battery.discharge_battery(-balance, self.interval)
+            # print('IMC: Discharge action:', action, 'balance:', balance, 'feed_in_power_limitation:',
+            #       feed_in_power_limitation, '=', feed_in_power_limitation - balance)
+            if feed_in_power_limitation:
+                discharge = self.battery.discharge_battery(-balance, self.interval,
+                                                           feed_in_power_limitation=feed_in_power_limitation - balance)
+            else:
+                discharge = self.battery.discharge_battery(-balance, self.interval)
         elif action == 'stopped':
             charge = discharge = 0
         elif action == 'export200':
+            feed_in_power_limitation = 200
             if balance > 0:
-                charge = self.battery.charge_battery(balance, self.interval)
+                charge = self.battery.charge_battery(balance, self.interval,
+                                                     feed_in_power_limitation=feed_in_power_limitation - balance)
                 discharge = 0
             else:
                 charge = 0
-                discharge = self.battery.discharge_battery(-balance, self.interval) + 200
+                discharge = self.battery.discharge_battery(-balance, self.interval)
         elif action == 'export':
             charge = 0
-            discharge = self.battery.discharge_battery(self.battery.charge_rate, self.interval)
+            if feed_in_power_limitation is not None:
+                feed_in_power_limitation = feed_in_power_limitation - balance
+                discharge = self.battery.discharge_battery(self.battery.discharge_rate, self.interval,
+                                                        feed_in_power_limitation=feed_in_power_limitation - balance)
+            else:
+                discharge = self.battery.discharge_battery(self.battery.discharge_rate, self.interval)
         elif action == 'import':
-            charge = self.battery.charge_battery(self.battery.charge_rate, self.interval)
+            import_rate = self._get_import_rate(balance, show_debug=show_debug)
+            if show_debug:
+                print(f'Import rate: {import_rate}, balance: {balance}, grid_limit: {self.grid_limit}')
+            charge = self.battery.charge_battery(import_rate, self.interval)
             discharge = 0
         else:
             if action != 'auto':
@@ -186,20 +233,40 @@ class InverterSimulator:
 
         assert charge >= 0, f'Charge is negative: {charge}'
         assert discharge >= 0, f'Discharge is negative: {discharge}'
-        assert charge <= self.battery.charge_rate, f'Charge is greater than charge rate: {charge}'
-        assert discharge <= self.battery.charge_rate, f'Discharge is greater than charge rate: {discharge}'
+        assert charge <= self.battery.max_charge_rate, f'Charge is greater than charge rate: {charge} v {self.max_charge_rate}'
+        assert discharge <= self.battery.max_charge_rate, f'Discharge is greater than charge rate: {discharge} v {self.max_charge_rate}'
         return charge, discharge
 
+    def _get_import_rate(self, balance: float, show_debug=False) -> float:
+        import_rate = self.battery.charge_rate
+        if show_debug:
+            print(f'Balance: {balance}, grid_limit: {self.grid_limit}, battery charge rate: {self.battery.charge_rate}')
+        if self.grid_limit:
+            full_grid_charge = self.grid_limit + balance
+            if full_grid_charge > self.battery.charge_rate:
+                import_rate = self.battery.charge_rate
+            elif full_grid_charge < 0:
+                import_rate = 0
+            else:
+                import_rate = full_grid_charge
+        if show_debug:
+            print(f'Calculated import rate: {import_rate} for balance: {balance}')
+        return import_rate if import_rate > 0 else 0
+
     def _update_simulation_data(self, action: str, reason: str, solar_power: float, charge: float, discharge: float, house_power: float,
-                                buy_price: float, sell_price: float, start_battery_soc: float, feed_in_power_limitation: float) -> None:
+                                buy_price: float, sell_price: float, start_battery_soc: float,
+                                feed_in_power_limitation: float, solar_curtailed: float, params={}) -> None:
         self.solar_powers.append(solar_power)
         self.charges.append(charge)
         self.discharges.append(discharge)
         self.battery_charges.append(self.battery.charge)
+        self.battery_power.append(discharge - charge)
         self.feed_in_power_limitation.append(feed_in_power_limitation)
         self.battery_socs.append(self.battery.soc)
+        self.solar_curtailed.append(solar_curtailed)
         self.actions.append(action)
         self.reasons.append(reason)
+        self.params.append(params)
 
         balance = solar_power - house_power - charge + discharge
         # print('balance', balance, 'solar_power', solar_power, 'house_power', house_power, 'charge', charge, 'discharge', discharge)
@@ -208,12 +275,16 @@ class InverterSimulator:
 
         kwh_balance = balance * (self.interval / 60) / 1000
         if kwh_balance < 0:
-            self.power_from_grid.append(-kwh_balance)
+            self.power_from_grid.append(-balance)
+            self.energy_from_grid.append(-kwh_balance)
             self.power_to_grid.append(0)
+            self.energy_to_grid.append(0)
             self.last_cost = buy_price * -kwh_balance
         else:
             self.power_from_grid.append(0)
-            self.power_to_grid.append(kwh_balance)
+            self.energy_from_grid.append(0)
+            self.power_to_grid.append(balance)
+            self.energy_to_grid.append(kwh_balance)
             self.last_cost = -sell_price * kwh_balance
         self.last_cost += self.daily_fee / (60 * 24 / self.interval)
         self.sim_costs.append(self.last_cost)
@@ -222,6 +293,7 @@ class InverterSimulator:
         for index, row in self.system.iterrows():
             self.current_interval = index
             params = self.get_state()
+            params['past_power_from_grid'] = self.power_from_grid[:-12] if len(self.power_from_grid) > 12 else self.power_from_grid
             if 'interval_time' in params:
                 del params['interval_time']
             if 'buy_forecast' not in params:
@@ -235,18 +307,42 @@ class InverterSimulator:
     def _calculate_final_metrics(self) -> None:
         self.system['charge'] = self.charges
         self.system['discharge'] = self.discharges
+        self.system['battery_power'] = self.battery_power
         self.system['action'] = self.actions
         self.system['reason'] = self.reasons
         self.system['battery_charge'] = self.battery_charges
         self.system['battery_soc'] = self.battery_socs
         self.system['balance'] = self.balances
         self.system['sim_grid'] = self.balances
+        self.system['grid_power'] = self.balances
         self.system['sim_cost'] = self.sim_costs
         self.system['solar_power'] = self.solar_powers
         self.system['Power from grid'] = self.power_from_grid
         self.system['Power to grid'] = self.power_to_grid
-        self.system['Energy from grid'] = self.system['Power from grid'] * self.interval / 60
-        self.system['Energy to grid'] = self.system['Power to grid'] * self.interval / 60
+        self.system['Energy from grid'] = self.energy_from_grid
+        self.system['Energy to grid'] = self.energy_to_grid
+        self.system['feed_in_power_limitation'] = self.feed_in_power_limitation
+        self.system['solar_curtailed'] = self.solar_curtailed
+        existing_columns = set(self.system.columns)
+        new_columns = set()
+        for param in self.params:
+            for key, value in param.items():
+                if key not in existing_columns and key not in new_columns:
+                    new_columns.add(key)
+        # Remove any columns with incorrect length
+        for col in list(self.system.columns):
+            if len(self.system[col]) != len(self.system.index):
+                self.system.drop(columns=[col], inplace=True)
+        # Add new columns with correct length
+        new_cols_dict = {}
+        for new_col in new_columns:
+            values = [param.get(new_col, None) for param in self.params]
+            if len(values) == len(self.system.index):
+                new_cols_dict[new_col] = values
+        if new_cols_dict:
+            new_cols_df = pd.DataFrame(new_cols_dict, index=self.system.index)
+            self.system = pd.concat([self.system, new_cols_df], axis=1)
+        
         self.algo_sim_usage = self.system['sim_cost'].sum()
 
 

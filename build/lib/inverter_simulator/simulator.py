@@ -115,29 +115,30 @@ class InverterSimulator:
             sell_price = row['sell_price']
         return row['house_power'], row['solar_power'], buy_price, sell_price
 
-    def _calculate_charge_discharge(self, action: str, balance: float) -> Tuple[float, float]:
+    def _calculate_charge_discharge(self, action: str, balance: float, feed_in_power_limitation=None) -> Tuple[float, float]:
         if '-' in action:
             action = action.split('-')[0]
         if action == 'charge':
-            charge = self.battery.charge_battery(balance, self.interval)
+            charge = self.battery.charge_battery(balance, self.interval, feed_in_power_limitation)
             discharge = 0
         elif action == 'discharge':
             charge = 0
-            discharge = self.battery.discharge_battery(-balance, self.interval)
+            discharge = self.battery.discharge_battery(-balance, self.interval, feed_in_power_limitation)
         elif action == 'auto':
             if balance > 0:
-                charge = self.battery.charge_battery(balance, self.interval)
+                charge = self.battery.charge_battery(balance, self.interval, feed_in_power_limitation)
                 discharge = 0
             else:
                 charge = 0
-                discharge = self.battery.discharge_battery(-balance, self.interval)
+                discharge = self.battery.discharge_battery(-balance, self.interval, feed_in_power_limitation)
         elif action == 'stopped':
             charge = discharge = 0
         elif action == 'export':
             charge = 0
-            discharge = self.battery.discharge_battery(self.battery.charge_rate, self.interval)
+            discharge = self.battery.discharge_battery(self.battery.charge_rate, self.interval, feed_in_power_limitation), 
+            
         elif action == 'import':
-            charge = self.battery.charge_battery(self.battery.charge_rate, self.interval)
+            charge = self.battery.charge_battery(self.battery.charge_rate, self.interval, feed_in_power_limitation)
             discharge = 0
         else:
             print('Invalid action', action)
@@ -165,12 +166,12 @@ class InverterSimulator:
 
         kwh_balance = balance / 12000
         if kwh_balance < 0:
-            self.power_from_grid.append(-kwh_balance)
+            self.power_from_grid.append(-balance)
             self.power_to_grid.append(0)
             self.last_cost = buy_price * -kwh_balance
         else:
             self.power_from_grid.append(0)
-            self.power_to_grid.append(kwh_balance)
+            self.power_to_grid.append(balance)
             self.last_cost = -sell_price * kwh_balance
         self.sim_costs.append(self.last_cost)
 

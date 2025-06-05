@@ -36,6 +36,27 @@ class TestBattery(unittest.TestCase):
         # should do nothing
         self.assertAlmostEqual(self.battery.charge, 5000, places=2)
 
+    def test_feed_limited_discharge_battery(self):
+        discharged = self.battery.discharge_battery(1000,
+                                                    feed_in_power_limitation=0)
+        self.assertAlmostEqual(discharged, 0)
+        # should do nothing
+        self.assertAlmostEqual(self.battery.charge, 5000, places=2)
+
+    def test_feed_allowed_discharge_battery(self):
+        discharged = self.battery.discharge_battery(1000,
+                                                    feed_in_power_limitation=2000)
+        self.assertAlmostEqual(discharged, 1000)
+        # should do nothing
+        self.assertAlmostEqual(self.battery.charge, 5000-(83.3333 * 1.05), places=2)
+
+    def test_feed_limited_discharge_battery(self):
+        discharged = self.battery.discharge_battery(1000,
+                                                    feed_in_power_limitation=500)
+        self.assertAlmostEqual(discharged, 500)
+        # should do half
+        self.assertAlmostEqual(self.battery.charge, 5000-(83.3333 / 2 * 1.05), places=2)
+
     def test_discharge_battery_limit(self):
         discharged = self.battery.discharge_battery(6000)
         self.assertAlmostEqual(discharged, 4600)

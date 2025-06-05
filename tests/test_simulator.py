@@ -53,6 +53,30 @@ class TestInverterSimulator(unittest.TestCase):
         self.assertEqual(self.simulator.current_interval, initial_interval + timedelta(minutes=self.simulator.interval))
  
 
+    def test_process_max_charge_interval(self):
+        index = self.simulator.system.index[0]
+        
+        self.assertEqual(0, self.simulator.grid_power)
+        row = self.simulator.system.loc[index]
+        self.simulator._process_interval(index, row, 'charge', 'always charge')
+        self.assertEqual(len(self.simulator.solar_powers), 1)
+        self.assertEqual(len(self.simulator.charges), 1)
+        self.assertEqual(len(self.simulator.discharges), 1)
+        self.assertEqual(len(self.simulator.battery_charges), 1)
+        self.assertEqual(len(self.simulator.actions), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(-2000, self.simulator.grid_power)
+        
+        index = self.simulator.system.index[1]
+        row = self.simulator.system.loc[index]
+        row = self.simulator.system.loc[index]
+        params = {'optimal_charging': 500}
+        self.simulator._process_interval(index, row, 'charge', 'always charge', params=params)
+        self.assertEqual([0,-500], self.simulator.battery_power)
+        self.assertEqual(500, self.simulator.grid_power)
+        self.assertAlmostEqual(5000 + (500 / 12 * 0.95), self.simulator.battery.charge, 2)
+
     def test_process_charge_interval(self):
         index = self.simulator.system.index[0]
         
@@ -105,7 +129,158 @@ class TestInverterSimulator(unittest.TestCase):
         self.assertEqual(len(self.simulator.actions), 1)
         self.assertEqual(len(self.simulator.sim_costs), 1)
         self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(0, self.simulator.grid_power)    
+        self.assertEqual([0], self.simulator.balances)      
+        self.assertEqual([0], self.simulator.energy_from_grid)  
+        self.assertEqual([0], self.simulator.energy_to_grid)  
+  
+
+    def test_process_auto_max_charge_interval(self):
+        index = self.simulator.system.index[0]
+        
         self.assertEqual(0, self.simulator.grid_power)
+        row = self.simulator.system.loc[index]
+        self.simulator._process_interval(index, row, 'auto', 'always auto')
+        self.assertEqual(len(self.simulator.solar_powers), 1)
+        self.assertEqual(len(self.simulator.charges), 1)
+        self.assertEqual(len(self.simulator.discharges), 1)
+        self.assertEqual(len(self.simulator.battery_charges), 1)
+        self.assertEqual(len(self.simulator.actions), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(0, self.simulator.grid_power)    
+        self.assertEqual([0], self.simulator.balances)      
+        self.assertEqual([0], self.simulator.energy_from_grid)  
+        self.assertEqual([0], self.simulator.energy_to_grid)  
+  
+
+    def test_process_auto_max_discharge_interval(self):
+        index = self.simulator.system.index[0]
+        
+        self.assertEqual(0, self.simulator.grid_power)
+        row = self.simulator.system.loc[index]
+        self.simulator._process_interval(index, row, 'auto', 'always auto')
+        self.assertEqual(len(self.simulator.solar_powers), 1)
+        self.assertEqual(len(self.simulator.charges), 1)
+        self.assertEqual(len(self.simulator.discharges), 1)
+        self.assertEqual(len(self.simulator.battery_charges), 1)
+        self.assertEqual(len(self.simulator.actions), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(0, self.simulator.grid_power)    
+        self.assertEqual([0], self.simulator.balances)      
+        self.assertEqual([0], self.simulator.energy_from_grid)  
+        self.assertEqual([0], self.simulator.energy_to_grid)  
+  
+    def test_process_import_with_over_limit_interval(self):
+        index = self.simulator.system.index[0]
+        
+        self.assertEqual(0, self.simulator.grid_power)
+        row = self.simulator.system.loc[index]
+        self.simulator.grid_limit = 1000
+        self.simulator._process_interval(index, row, 'import', 'always import')
+        self.assertEqual(len(self.simulator.solar_powers), 1)
+        self.assertEqual(len(self.simulator.charges), 1)
+        self.assertEqual(len(self.simulator.discharges), 1)
+        self.assertEqual(len(self.simulator.battery_charges), 1)
+        self.assertEqual(len(self.simulator.actions), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual([2000], self.simulator.solar_powers)      
+        self.assertEqual(-2000, self.simulator.grid_power)         
+        self.assertEqual([-2000], self.simulator.balances)      
+        self.assertAlmostEqual(0.1666, self.simulator.energy_from_grid[0], 2)      
+        self.simulator.grid_limit = 10000
+  
+  
+    def test_process_import_with_optimal_charge_interval(self):
+        index = self.simulator.system.index[0]
+        
+        self.assertEqual(0, self.simulator.grid_power)
+        row = self.simulator.system.loc[index]
+        self.simulator.grid_limit = 4000
+        params = {'optimal_charging': 1000}
+        self.simulator._process_interval(index, row, 'import', 'always import',
+                                         params=params)
+        self.assertEqual(len(self.simulator.solar_powers), 1)
+        self.assertEqual(len(self.simulator.charges), 1)
+        self.assertEqual(len(self.simulator.discharges), 1)
+        self.assertEqual(len(self.simulator.battery_charges), 1)
+        self.assertEqual(len(self.simulator.actions), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual([-1000], self.simulator.battery_power)      
+        self.assertEqual([2000], self.simulator.solar_powers)      
+        self.assertEqual(-3000, self.simulator.grid_power)         
+        self.assertEqual([-3000], self.simulator.balances)      
+        self.assertAlmostEqual(0.25, self.simulator.energy_from_grid[0], 2)      
+        self.simulator.grid_limit = 10000
+  
+    def test_process_import_with_limit_interval(self):
+        index = self.simulator.system.index[0]
+        
+        self.assertEqual(0, self.simulator.grid_power)
+        row = self.simulator.system.loc[index]
+        self.simulator.grid_limit = 3000
+        self.simulator._process_interval(index, row, 'import', 'always import')
+        self.assertEqual(len(self.simulator.solar_powers), 1)
+        self.assertEqual(len(self.simulator.charges), 1)
+        self.assertEqual(len(self.simulator.discharges), 1)
+        self.assertEqual(len(self.simulator.battery_charges), 1)
+        self.assertEqual(len(self.simulator.actions), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual([2000], self.simulator.solar_powers)
+        self.assertEqual([-1000], self.simulator.battery_power)  
+        self.assertEqual(-3000, self.simulator.grid_power)         
+        self.assertEqual([-3000], self.simulator.balances)          
+        self.assertEqual([0.25], self.simulator.energy_from_grid)      
+        self.simulator.grid_limit = 10000
+  
+  
+    def test_process_import_with_limit_and_over_optimal_charging_interval(self):
+        index = self.simulator.system.index[0]
+        
+        self.assertEqual(0, self.simulator.grid_power)
+        row = self.simulator.system.loc[index]
+        self.simulator.grid_limit = 3000
+        params = {'optimal_charging': 5000}
+        self.simulator._process_interval(index, row, 'import', 'always import', params=params)
+        self.assertEqual(len(self.simulator.solar_powers), 1)
+        self.assertEqual(len(self.simulator.charges), 1)
+        self.assertEqual(len(self.simulator.discharges), 1)
+        self.assertEqual(len(self.simulator.battery_charges), 1)
+        self.assertEqual(len(self.simulator.actions), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual([2000], self.simulator.solar_powers)      
+        self.assertEqual(-3000, self.simulator.grid_power)         
+        self.assertEqual([-3000], self.simulator.balances)      
+        self.assertEqual([-1000], self.simulator.battery_power)      
+        self.assertAlmostEqual(0.25, self.simulator.energy_from_grid[0], 2)
+        self.simulator.grid_limit = 10000
+  
+    def test_process_import_with_limit_and_optimal_charging_interval(self):
+        index = self.simulator.system.index[0]
+        
+        self.assertEqual(0, self.simulator.grid_power)
+        row = self.simulator.system.loc[index]
+        self.simulator.grid_limit = 3000
+        params = {'optimal_charging': 500}
+        self.simulator._process_interval(index, row, 'import', 'always import', params=params)
+        self.assertEqual(len(self.simulator.solar_powers), 1)
+        self.assertEqual(len(self.simulator.charges), 1)
+        self.assertEqual(len(self.simulator.discharges), 1)
+        self.assertEqual(len(self.simulator.battery_charges), 1)
+        self.assertEqual(len(self.simulator.actions), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual([2000], self.simulator.solar_powers)      
+        self.assertEqual(-2500, self.simulator.grid_power)         
+        self.assertEqual([-2500], self.simulator.balances)      
+        self.assertEqual([-500], self.simulator.battery_power)      
+        self.assertAlmostEqual(0.2083, self.simulator.energy_from_grid[0], 2)
+        self.simulator.grid_limit = 10000
   
     def test_process_import_interval(self):
         index = self.simulator.system.index[0]
@@ -120,7 +295,10 @@ class TestInverterSimulator(unittest.TestCase):
         self.assertEqual(len(self.simulator.actions), 1)
         self.assertEqual(len(self.simulator.sim_costs), 1)
         self.assertEqual(len(self.simulator.sim_costs), 1)
-        self.assertEqual(-6600, self.simulator.grid_power)      
+        self.assertEqual([2000], self.simulator.solar_powers)      
+        self.assertEqual(-6600, self.simulator.grid_power)         
+        self.assertEqual([-6600], self.simulator.balances)      
+        self.assertEqual([0.55], self.simulator.energy_from_grid)      
 
     def test_process_export_interval(self):
         index = self.simulator.system.index[0]
@@ -137,6 +315,41 @@ class TestInverterSimulator(unittest.TestCase):
         self.assertEqual(len(self.simulator.sim_costs), 1)
         self.assertEqual(2600, self.simulator.grid_power)
 
+    def test_process_export_curtail_interval(self):
+        index = self.simulator.system.index[0]
+        self.assertEqual(0, self.simulator.grid_power)
+        row = self.simulator.system.loc[index]
+        params = {'feed_in_power_limitation': 0}
+        self.simulator._process_interval(index, row, 'export', 'always export', params=params)
+        self.assertEqual(len(self.simulator.solar_powers), 1)
+        self.assertEqual(len(self.simulator.charges), 1)
+        self.assertEqual(len(self.simulator.discharges), 1)
+        self.assertEqual(len(self.simulator.battery_charges), 1)
+        self.assertEqual(len(self.simulator.actions), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual(len(self.simulator.sim_costs), 1)
+        self.assertEqual([2000], self.simulator.solar_curtailed)
+        self.assertEqual(0, self.simulator.grid_power)
+
+    def test_get_import_rate(self):
+        index = self.simulator.system.index[0]
+        row = self.simulator.system.loc[index]
+        import_rate = self.simulator._get_import_rate(2000)
+        self.assertEqual(import_rate, 4600)
+        self.simulator.battery.charge_rate = 2600
+        import_rate = self.simulator._get_import_rate(-2000)
+        self.assertEqual(import_rate, 2600)
+        self.simulator.grid_limit = 3000
+        import_rate = self.simulator._get_import_rate(-2000)
+        self.assertEqual(import_rate, 1000)
+        # Import rate: 0, balance: -47952.0, grid_limit: 120000
+        self.simulator.grid_limit = 120000
+        self.simulator.battery.charge_rate = 200000
+        import_rate = self.simulator._get_import_rate(-47952.0)
+        self.assertEqual(import_rate, 120000-47952.0)
+
+
+
     def test_calculate_charge_discharge(self):
         test_cases = [
             ('charge', 1000, 1000, 0),
@@ -150,6 +363,33 @@ class TestInverterSimulator(unittest.TestCase):
                 charge, discharge = self.simulator._calculate_charge_discharge(action, pv_surplus)
                 self.assertAlmostEqual(charge, expected_charge)
                 self.assertAlmostEqual(discharge, expected_discharge)
+        
+    def test_calculate_charge_curtailed_discharge(self):
+        test_cases = [
+            # action, pv_surplus, expected_charge, feedin_limit, expected_discharge
+            ('charge', 1000, 1000, 0, 0),
+            ('discharge', -1000, 0, 1000, 1000),
+            ('discharge', -1000, 0, 0, 1000),
+            ('discharge', 1000, 0, 500, 0),
+            ('discharge', 1000, 0, 0, 0),
+            ('discharge', -1000, 0, 500, 1000),
+            ('auto', 1000, 1000, 0, 0),
+            ('auto', -1000, 0, 0, 1000),
+            ('auto', -1000, 0, 500, 1000),
+            ('stopped', 1000, 0, 0, 0),
+        ]
+        for action, balance, expected_charge, feedin_limit, expected_discharge in test_cases:
+            with self.subTest(action=action, balance=balance):
+                params = {'feed_in_power_limitation': feedin_limit} if feedin_limit is not None else {}
+                charge, discharge = self.simulator._calculate_charge_discharge(action, balance, params=params)
+                msg = f"""Action: {action}, balance: {balance}, 
+                          feedin_limit: {feedin_limit},
+                          Charge: {charge}=={expected_charge}, 
+                          Discharge: {discharge}=={expected_discharge}"""
+                self.assertAlmostEqual(charge, expected_charge, msg=msg)
+                self.assertAlmostEqual(discharge, expected_discharge, msg=msg)
+        
+
 
     @patch('inverter_simulator.simulator.InverterSimulator._calculate_final_metrics')
     def test_run_simulation(self, mock_calculate_final_metrics):

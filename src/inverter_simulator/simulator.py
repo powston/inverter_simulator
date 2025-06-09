@@ -198,6 +198,10 @@ class InverterSimulator:
                 discharge = self.battery.discharge_battery(-balance, self.interval)
         elif action == 'stopped':
             charge = discharge = 0
+        elif action == 'export0':
+            charge = 0
+            discharge = self.battery.discharge_battery(self.battery.discharge_rate, self.interval,
+                                                       feed_in_power_limitation=0 - balance)
         elif action == 'export200':
             feed_in_power_limitation = 200
             if balance > 0:

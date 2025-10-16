@@ -17,6 +17,7 @@ import re
 from astral import LocationInfo
 from astral.sun import sun
 from inverterintelligence.decision_logger import DecisionLogger
+from inverterintelligence.user_actions import block_code
 from pytrader.permutation_model import PermutationModel, find_best_five_minute_trades
 from pytrader.aemo_retrieval import retrieve_forecasted_prices
 from pytrader.battery.battery_activity import BatteryActivity
@@ -175,6 +176,9 @@ def guarded_unpack_sequence(seq, count):
     raise ValueError(f"Cannot unpack sequence: Expected {count} elements, got {len(seq)}")
 
 def restricted_run_code(user_code, action_params, file_name=None):
+
+    user_code = block_code(user_code)
+
     SAFE_AUGUMENTED_ASSIGNMENT_OPERATORS = (
         '+=', '-=', '*=', '/=', '%=', '**=',
         '<<=', '>>=', '|=', '^=', '&=', '//='
@@ -306,6 +310,9 @@ def process_params(params: dict, restricted_globals: dict) -> dict:  # noqa: C90
     gti_today = sum(hourly_gti_forecast[:hours_until_midnight])
     gti_past = sum(hourly_gti_forecast[:interval_time.hour])
     gti_to_2pm = sum(hourly_gti_forecast[:15])
+    tariff = params.get('tariff', None)
+    export_tariff = params.get('export_tariff', tariff)
+    max_demand_fee = params.get('max_demand_fee', 0)
     params.update({
         'current_hour': current_hour,
         'hourly_gti_forecast': hourly_gti_forecast,
@@ -321,6 +328,8 @@ def process_params(params: dict, restricted_globals: dict) -> dict:  # noqa: C90
         'is_daytime': is_daytime,
         'soc_surplus': soc_surplus,
         'time_left': time_left,
+        'export_tariff': export_tariff,
+        'max_demand_fee': max_demand_fee,
         'projected_deficit': projected_deficit,
     })
     return params

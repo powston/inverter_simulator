@@ -28,7 +28,8 @@ setup(
     install_requires=[
         "pandas>=1.0.0",
         "numpy>=1.18.0",
-        "astral>=3.2"
+        "astral>=3.2",
+        "RestrictedPython>=8.0"
     ],
     extras_require={
         "dev": [

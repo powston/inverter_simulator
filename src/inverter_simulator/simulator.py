@@ -131,17 +131,19 @@ class InverterSimulator:
         solar_curtailed = 0
         _balance = solar_power - house_power
         show_debug = False
-        # if index == pd.Timestamp('2025-03-30 22:40:00+11:00'):
-        #     show_debug = True
-        #     print('Processing interval:', index, 'action:', action, 'reason:', reason, 'balance:', _balance,
-        #           'house_power:', house_power, 'solar_power:', solar_power, 'buy_price:', buy_price,
-        #           'sell_price:', sell_price, 'start_battery_soc:', start_battery_soc,)
-        charge, discharge = self._calculate_charge_discharge(action, _balance, params=params, show_debug=show_debug)  # This is in Wh
-        expected_grid_power = discharge - charge + solar_power - house_power  # This is in W
-        # if index == pd.Timestamp('2025-03-30 22:40:00+11:00'):
-        #     print('params:', params)
-        #     print('expected_grid_power', expected_grid_power, 'feed_in_power_limitation', feed_in_power_limitation, 'balance:', _balance)
-        #     print('charge', charge, 'discharge', discharge, 'solar_power',solar_power, 'house_power',house_power)
+        expected_grid_power = solar_power - house_power
+        # print('expected_grid_power', expected_grid_power, 'feed_in_power_limitation', feed_in_power_limitation, 'balance:', _balance)
+        # print('solar_power',solar_power, 'house_power',house_power)
+        if action == 'import_no_solar':
+            solar_curtailed = solar_power
+            solar_power = 0
+            _balance = solar_power - house_power
+            expected_grid_power = solar_power - house_power
+        if action == 'fullstop':
+            solar_curtailed = solar_power
+            solar_power = 0
+            _balance = solar_power - house_power
+            expected_grid_power = solar_power - house_power
         if feed_in_power_limitation is not None and expected_grid_power > feed_in_power_limitation:
             curtail_needed = expected_grid_power + feed_in_power_limitation
             # if index == pd.Timestamp('2025-03-30 22:40:00+11:00'):
@@ -152,6 +154,13 @@ class InverterSimulator:
             else:
                 solar_curtailed = curtail_needed
                 solar_power -= curtail_needed
+        # if index == pd.Timestamp('2025-03-30 22:40:00+11:00'):
+        #     show_debug = True
+        #     print('Processing interval:', index, 'action:', action, 'reason:', reason, 'balance:', _balance,
+        #           'house_power:', house_power, 'solar_power:', solar_power, 'buy_price:', buy_price,
+        #           'sell_price:', sell_price, 'start_battery_soc:', start_battery_soc,)
+        charge, discharge = self._calculate_charge_discharge(action, _balance, params=params, show_debug=show_debug)  # This is in Wh
+        
         # if index == pd.Timestamp('2025-03-30 22:40:00+11:00'):
         #     logger.info(f'Processing interval: {index}, action: {action}, reason: {reason}, balance: {_balance}, house_power: {house_power}, solar_curtailed: {solar_curtailed} solar_power: {solar_power}, buy_price: {buy_price}, feed_in_power_limitation: {feed_in_power_limitation}, charge: {charge}, discharge: {discharge}')
         self._update_simulation_data(action, reason, solar_power, charge, discharge, house_power, buy_price, sell_price, start_battery_soc, feed_in_power_limitation, solar_curtailed, params)
@@ -184,6 +193,10 @@ class InverterSimulator:
         action = str(action).lower()
         if '-' in action:
             action = action.split('-')[0]
+        if action == 'auto_api_curtail':
+            action = 'auto'
+            if feed_in_power_limitation is None:
+                feed_in_power_limitation = 0
         if action == 'charge':
             charge = self.battery.charge_battery(balance, self.interval)
             discharge = 0
@@ -198,6 +211,8 @@ class InverterSimulator:
                 discharge = self.battery.discharge_battery(-balance, self.interval)
         elif action == 'stopped':
             charge = discharge = 0
+        elif action == 'fullstop':
+            charge = discharge = 0
         elif action == 'export0':
             charge = 0
             discharge = self.battery.discharge_battery(self.battery.discharge_rate, self.interval,
@@ -211,15 +226,17 @@ class InverterSimulator:
             else:
                 charge = 0
                 discharge = self.battery.discharge_battery(-balance, self.interval)
-        elif action == 'export':
+        elif action in ['export', 'export100']:
             charge = 0
+            if action == 'export100' and feed_in_power_limitation is None:
+                feed_in_power_limitation = 100
             if feed_in_power_limitation is not None:
                 feed_in_power_limitation = feed_in_power_limitation - balance
                 discharge = self.battery.discharge_battery(self.battery.discharge_rate, self.interval,
-                                                        feed_in_power_limitation=feed_in_power_limitation - balance)
+                                                           feed_in_power_limitation=feed_in_power_limitation)
             else:
                 discharge = self.battery.discharge_battery(self.battery.discharge_rate, self.interval)
-        elif action == 'import':
+        elif action in ['import', 'import_no_solar']:
             import_rate = self._get_import_rate(balance, show_debug=show_debug)
             if show_debug:
                 print(f'Import rate: {import_rate}, balance: {balance}, grid_limit: {self.grid_limit}')

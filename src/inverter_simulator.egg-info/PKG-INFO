@@ -1,4 +1,4 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.4
 Name: inverter_simulator
 Version: 0.1.4
 Summary: A simulator for inverter systems with battery storage
@@ -20,10 +20,21 @@ Description-Content-Type: text/markdown
 Requires-Dist: pandas>=1.0.0
 Requires-Dist: numpy>=1.18.0
 Requires-Dist: astral>=3.2
+Requires-Dist: RestrictedPython>=8.0
 Provides-Extra: dev
 Requires-Dist: pytest>=6.0; extra == "dev"
 Requires-Dist: pytest-cov>=2.0; extra == "dev"
 Requires-Dist: flake8>=3.9; extra == "dev"
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: provides-extra
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
 
 # Inverter Simulator
 

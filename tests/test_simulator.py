@@ -328,7 +328,7 @@ class TestInverterSimulator(unittest.TestCase):
         self.assertEqual(len(self.simulator.actions), 1)
         self.assertEqual(len(self.simulator.sim_costs), 1)
         self.assertEqual(len(self.simulator.sim_costs), 1)
-        self.assertEqual([2000], self.simulator.solar_curtailed)
+        self.assertEqual([0], self.simulator.solar_curtailed)
         self.assertEqual(0, self.simulator.grid_power)
 
     def test_get_import_rate(self):

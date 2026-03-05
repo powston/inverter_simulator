@@ -1,7 +1,7 @@
 from matplotlib import pyplot as plt
 import pandas as pd
-import numpy as np
 import math
+import json
 from datetime import datetime, timedelta, timezone  # noqa: F401
 from zoneinfo import ZoneInfo
 import numpy as np  # noqa: F401
@@ -11,21 +11,19 @@ from inverter_simulator.simulator import InverterSimulator
 from RestrictedPython import compile_restricted
 from RestrictedPython.Guards import guarded_iter_unpack_sequence
 from RestrictedPython import safe_builtins
-from zoneinfo import ZoneInfo
-from datetime import datetime, timedelta
 import re
 from astral import LocationInfo
 from astral.sun import sun
 from inverterintelligence.decision_logger import DecisionLogger
-from inverterintelligence.user_actions import block_code
+from inverterintelligence.user_actions import block_code, get_error_details, process_params
+from inverterintelligence.ac_estimator import find_soc_needed_for_ac
+from inverterintelligence.ii_logging import logger
 from pytrader.permutation_model import PermutationModel, find_best_five_minute_trades
 from pytrader.aemo_retrieval import retrieve_forecasted_prices
 from pytrader.battery.battery_activity import BatteryActivity
+from inverterintelligence.format_utils import json_sanitize
 from unittest.mock import MagicMock
-import logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+
 
 def cicd_parse_script(script_lines):
     """
@@ -40,6 +38,7 @@ def cicd_parse_script(script_lines):
         except Exception as e:
             logger.error(f"Error parsing line '{line}': {e}")
     return cicd_data
+
 
 def cicd_parse_line(line):
     """
@@ -57,6 +56,35 @@ def cicd_parse_line(line):
     else:
         return None
 
+
+def find_battery_loss(
+    meter_data_df, file_name, interval,
+    battery_capacity, tariff, export_tariff, network, charge_rate, max_ppv_power, daily_fee,
+    spot_to_tariff, state, grid_limit, latitude, longitude, timezone, battery_charge
+):
+    script_content = 'action = billed_action'
+    existing_bill = meter_data_df['billed_costs'].sum() - meter_data_df['billed_earnings'].sum()
+    best_battery_loss = None
+    best_difference = abs(existing_bill * 10)
+    for battery_loss in [5, 10, 15, 20, 25, 30]:
+        script_bill, ret_df = run_scripted_simulation(
+            meter_data_df, script_content, file_name, interval=interval,
+            battery_capacity=battery_capacity, tariff=tariff, export_tariff=export_tariff, network=network,
+            charge_rate=charge_rate, max_ppv_power=max_ppv_power, daily_fee=daily_fee,
+            spot_to_tariff=spot_to_tariff, state=state, battery_loss=battery_loss, grid_limit=grid_limit,
+            latitude=latitude, longitude=longitude, timezone_str=timezone, battery_charge=battery_charge)
+        difference = abs((script_bill - existing_bill))
+        if best_battery_loss and difference > best_difference:
+            logger.info("Battery loss optimization converged.")
+            break
+        if difference < best_difference:
+            best_difference = difference
+            best_battery_loss = battery_loss
+        print('battery_loss:', battery_loss, 'script_bill:', script_bill, 'existing_bill:', existing_bill, 'diff:', script_bill - existing_bill)
+    print('Best battery_loss:', best_battery_loss)
+    return best_battery_loss
+
+
 def classify_battery(state='NSW', battery_capacity=50, charge_rate=25, charge=25,
                      charge_efficiency=95, discharge_efficiency=95,
                      clairvoyant=False, cash=0, sink=0):
@@ -71,22 +99,26 @@ def classify_battery(state='NSW', battery_capacity=50, charge_rate=25, charge=25
     new_capacity = int(classified_duration * base_unit)
     battery_soc = (charge / battery_capacity)
     new_charge = int(charge * battery_soc)
-    logger.info(f"Classified battery: {state}, capacity: {new_capacity} kWh, charge: {new_charge} kWh")
+    logger.info(f"Classified battery: {state} capacity: {new_capacity} kWh charge: {new_charge} kWh")
     return MagicMock(state=state, battery_capacity=new_capacity, charge_rate=charge_rate, charge=base_unit,
                      charge_efficiency=charge_efficiency, discharge_efficiency=discharge_efficiency,
                      clairvoyant=clairvoyant, cash=cash, sink=sink)
 
+
 # Global cache for options to avoid recomputation per simulation run
 _OPTIONS_CACHE = {}
 
-def build_options(half_hour_window=5, five_minute_window=12, battery_capacity=80, charge_rate=25,
-                   charge_efficiency=95, discharge_efficiency=95, charge=40):
+
+def build_options(
+    half_hour_window=5, five_minute_window=12, battery_capacity=80, charge_rate=25,
+    charge_efficiency=95, discharge_efficiency=95, charge=40
+):
     """
     Build the battery options for the simulation.
     Caches options globally per run to avoid recomputation.
     """
     cache_key = str(f"{half_hour_window}_{five_minute_window}_{battery_capacity}_{charge_rate}_"
-                   f"{charge_efficiency}_{discharge_efficiency}")
+                    f"{charge_efficiency}_{discharge_efficiency}")
     if cache_key in _OPTIONS_CACHE:
         return _OPTIONS_CACHE[cache_key]
 
@@ -96,23 +128,26 @@ def build_options(half_hour_window=5, five_minute_window=12, battery_capacity=80
                                charge=charge, cash=0, sink=0)
     permutation_model = PermutationModel()
     half_hour_options = permutation_model.get_options(
-            half_hour_window,
-            capacity=battery.battery_capacity,
-            in_discharge_efficiency=int(battery.discharge_efficiency),
-            in_charge_efficiency=int(battery.charge_efficiency)
-        )
+        half_hour_window,
+        capacity=battery.battery_capacity,
+        in_discharge_efficiency=int(battery.discharge_efficiency),
+        in_charge_efficiency=int(battery.charge_efficiency)
+    )
     five_minute_options = permutation_model.get_five_minute_options(
-            capacity=battery.battery_capacity,
-            in_discharge_efficiency=int(battery.discharge_efficiency),
-            in_charge_efficiency=int(battery.charge_efficiency),
-            window=five_minute_window
-        )
+        capacity=battery.battery_capacity,
+        in_discharge_efficiency=int(battery.discharge_efficiency),
+        in_charge_efficiency=int(battery.charge_efficiency),
+        window=five_minute_window
+    )
     _OPTIONS_CACHE[cache_key] = (half_hour_options, five_minute_options)
     return half_hour_options, five_minute_options
 
-def get_battery_activity(interval_time: datetime, half_hour_options=None, five_min_options=None, state='NSW', battery_capacity=80, charge_rate=25,
-        charge_efficiency=95, discharge_efficiency=95, charge=40, half_hour_window=5, five_minute_window=12,
-        five_min_forecast=None, forecast=None):
+
+def get_battery_activity(
+    interval_time: datetime, half_hour_options=None, five_min_options=None, state='NSW', battery_capacity=80, charge_rate=25,
+    charge_efficiency=95, discharge_efficiency=95, charge=40, half_hour_window=5, five_minute_window=12,
+    five_min_forecast=None, forecast=None
+):
     """
     Get the battery activity for a given time interval.
     :param interval_time: The time interval for the battery activity.
@@ -147,14 +182,14 @@ def get_battery_activity(interval_time: datetime, half_hour_options=None, five_m
     five_minute_prices = [float(i) for i in five_min_forecast]
     half_hour_prices = [(float(i)) for i in forecast]
     max_permutation, confidence = find_best_five_minute_trades(
-            five_min_options=five_min_options,
-            half_hour_options=half_hour_options,
-            five_min_prices=five_minute_prices,
-            half_hour_prices=half_hour_prices,
-            five_min_window=five_minute_window,
-            half_hour_window=half_hour_window,
-            charge=battery.charge  # type: ignore
-        )
+        five_min_options=five_min_options,
+        half_hour_options=half_hour_options,
+        five_min_prices=five_minute_prices,
+        half_hour_prices=half_hour_prices,
+        five_min_window=five_minute_window,
+        half_hour_window=half_hour_window,
+        charge=battery.charge  # type: ignore
+    )
     action = BatteryActivity.get_action_by_cash(max_permutation["five_minute_permutation"][0])
     if action == BatteryActivity.HOLD:
         action = 'stopped'
@@ -166,6 +201,7 @@ def get_battery_activity(interval_time: datetime, half_hour_options=None, five_m
         action = 'auto'
     return action, confidence
 
+
 def guarded_unpack_sequence(seq, count):
     """
     Safely unpack a sequence with a fixed number of elements in restricted code.
@@ -175,14 +211,31 @@ def guarded_unpack_sequence(seq, count):
         return seq
     raise ValueError(f"Cannot unpack sequence: Expected {count} elements, got {len(seq)}")
 
+
 def restricted_run_code(user_code, action_params, file_name=None):
 
-    user_code = block_code(user_code)
+    user_code, block_code_count, user_code_count = block_code(user_code)
 
     SAFE_AUGUMENTED_ASSIGNMENT_OPERATORS = (
         '+=', '-=', '*=', '/=', '%=', '**=',
         '<<=', '>>=', '|=', '^=', '&=', '//='
     )
+    
+    def getattr_debug(obj, attr):
+        try:
+            return getattr(obj, attr)
+        except Exception as e:
+            type_name = type(obj).__name__
+            logger.error(f"Error accessing attribute '{attr}' of object '{obj}' (type: {type_name}): {e}")
+            raise e
+
+    def getitem_debug(obj, key):
+        try:
+            return obj[key]
+        except Exception as e:
+            type_name = type(obj).__name__
+            logger.error(f"Error accessing item '{key}' of object '{obj}' (type: {type_name}): {e}")
+            raise e
 
     def custom_inplacevar(op, x, y):
         assert op in SAFE_AUGUMENTED_ASSIGNMENT_OPERATORS
@@ -239,105 +292,42 @@ def restricted_run_code(user_code, action_params, file_name=None):
         action_params['decisions'] = decisions.to_dict()
     except Exception as e:
         # Extract line number, filename, offset, and text details for enhanced debugging
+        # block_code_count, user_code_count, user_code, e
+        lineno, filename, offset, error_text = get_error_details(block_code_count, user_code_count, user_code, e)
+        lines = user_code.split('\n')
+        for x, line in enumerate(lines):
+            if x + 1 == lineno:
+                start = max(0, x - 3)
+                end = min(len(lines), x + 4)
+                logger.error(f"Context around error (lines {start+1}-{end}):")
+                for i in range(start, end):
+                    marker = '>>' if i == x else '  '
+                    logger.error(f"{marker} {i+1}: {lines[i]}")
+                break
         logger.error(f"Error executing user code {file_name}: {e}", exc_info=True)
+        with open('error_code.py', 'w') as f:
+            f.write(user_code)
+        with open('error_params.json', 'w') as f:
+            f.write(json.dumps(json_sanitize(action_params), indent=2))
     return action_params
 
+def log_code_context(user_code, lineno, context=4):
+    lines = user_code.split("\n")
+    start = max(0, lineno - context - 1)
+    end = min(len(lines), lineno + context)
 
-def process_params(params: dict, restricted_globals: dict) -> dict:  # noqa: C901
-    interval_time = params['interval_time']
-    weather_data = params.get('weather_data', {})
-    forecast = params.get('forecast', [])
-    battery_soc = params.get('battery_soc', 0.0)
-    # Actually load them from the script
-    BATTERY_SOC_NEEDED = restricted_globals.get('BATTERY_SOC_NEEDED', 80)
-    BAD_SUN_DAY_KEEP_SOC = restricted_globals.get('BAD_SUN_DAY_KEEP_SOC', 20)
-    GOOD_SUN_DAY = restricted_globals.get('GOOD_SUN_DAY', 20)
-    GOOD_SUN_HOUR = restricted_globals.get('GOOD_SUN_HOUR', 20)
+    logger.error("----- CODE CONTEXT -----")
+    for i in range(start, end):
+        prefix = ">>" if i + 1 == lineno else "  "
+        logger.error(f"{prefix} {i+1:4d}: {lines[i]}")
+    logger.error("------------------------")
 
-    current_hour = interval_time.hour
-    hourly_gti_forecast = weather_data.get('hourly', {}).get('global_tilted_irradiance_instant', [-1] * 48)
-    hours_until_midnight = 24 - current_hour
-    gti_sum_tomorrow = sum(hourly_gti_forecast[hours_until_midnight:])
-    soc_surplus = 0.0
-    time_left = 0.0
-    projected_deficit = 0.0
-    night_reserve = BATTERY_SOC_NEEDED
-    if gti_sum_tomorrow < (GOOD_SUN_DAY * 100):
-        night_reserve += BAD_SUN_DAY_KEEP_SOC
-    if forecast and current_hour > 16:
-        morning_peak = max(forecast[:-6])
-        if morning_peak > 400:
-            night_reserve += 10
-    elif forecast and current_hour < 6:
-        morning_away = current_hour * 2
-        morning_peak = max(forecast[morning_away:])
-        if morning_peak > 400:
-            night_reserve += 10
-    night_reserve = min(night_reserve, 100)
-
-    def get_first_above_threshold(hourly_gti_forecast, threshold):
-        for i in range(len(hourly_gti_forecast)):
-            if hourly_gti_forecast[i] > threshold:
-                return i
-        return -1
-
-    def find_last_index(hourly_gti_forecast, threshold):
-        for i in range(len(hourly_gti_forecast)):
-            if hourly_gti_forecast[i] < threshold:
-                return i
-        return -1
-
-    first_good_gti = get_first_above_threshold(hourly_gti_forecast, GOOD_SUN_HOUR * 10)
-    last_good_gti = find_last_index(hourly_gti_forecast[:24], GOOD_SUN_HOUR * 10)
-    is_solar_window_now = (interval_time.hour >= first_good_gti) and (interval_time.hour <= last_good_gti)
-    sunrise_datetime = params.get('sunrise', None)
-    if sunrise_datetime is None:
-        sunrise_datetime = interval_time.replace(hour=6)
-    sunrise_time = sunrise_datetime.time()
-    sunset_datetime = params.get('sunset', None)
-    if sunset_datetime is None:
-        sunset_datetime = interval_time.replace(hour=18)
-    sunset_time = sunset_datetime.time()
-    is_daytime = sunrise_time < interval_time.time() < sunset_time
-    if battery_soc and is_daytime:
-        soc_surplus = battery_soc - night_reserve
-        time_left = (((sunset_datetime - interval_time).total_seconds() - 1800) % 86400) / 3600
-    elif battery_soc and not is_daytime:
-        night_hours = (((sunrise_datetime - sunset_datetime).total_seconds()) % 86400) / 3600
-        time_left = (((sunrise_datetime - interval_time).total_seconds() + 1800) % 86400) / 3600
-        soc_surplus = (battery_soc - night_reserve)
-        projected_deficit = battery_soc - night_reserve * (time_left / night_hours)
-    gti_today = sum(hourly_gti_forecast[:hours_until_midnight])
-    gti_past = sum(hourly_gti_forecast[:interval_time.hour])
-    gti_to_2pm = sum(hourly_gti_forecast[:15])
-    tariff = params.get('tariff', None)
-    export_tariff = params.get('export_tariff', tariff)
-    max_demand_fee = params.get('max_demand_fee', 0)
-    params.update({
-        'current_hour': current_hour,
-        'hourly_gti_forecast': hourly_gti_forecast,
-        'hours_until_midnight': hours_until_midnight,
-        'gti_today': gti_today,
-        'gti_past': gti_past,
-        'gti_to_2pm': gti_to_2pm,
-        'gti_sum_tomorrow': gti_sum_tomorrow,
-        'night_reserve': night_reserve,
-        'first_good_gti': first_good_gti,
-        'last_good_gti': last_good_gti,
-        'is_solar_window_now': is_solar_window_now,
-        'is_daytime': is_daytime,
-        'soc_surplus': soc_surplus,
-        'time_left': time_left,
-        'export_tariff': export_tariff,
-        'max_demand_fee': max_demand_fee,
-        'projected_deficit': projected_deficit,
-    })
-    return params
-
-def run_scripted_simulation(meter_data_df, script_content, filename, interval, battery_capacity, tariff, network,
+def run_scripted_simulation(meter_data_df, script_content, filename, interval, battery_capacity, tariff, network,  # noqa: C901
                             charge_rate, max_ppv_power, daily_fee, spot_to_tariff, state,
                             latitude, longitude, timezone_str, **kwargs):
     default_action = kwargs.get('default_action', 'auto')
+    export_tariff = kwargs.get('export_tariff', tariff)
+
     def run_user_code(interval_time, **kwargs):
         try:
             location = LocationInfo(name='', region=state, timezone=timezone_str,
@@ -350,15 +340,22 @@ def run_scripted_simulation(meter_data_df, script_content, filename, interval, b
             params = {'interval_time': interval_time,
                       'battery_capacity': battery_capacity,
                       'charge_rate': charge_rate,
+                      'optimal_charging': charge_rate,
+                      'optimal_discharging': charge_rate,
                       'max_ppv_power': max_ppv_power,
                       'action': 'auto',
                       'reason': 'default: auto',
                       'latitude': latitude,
                       'longitude': longitude,
+                      'tariff': tariff,
+                      'export_tariff': export_tariff,
                       'grid_power': 0,
                       'export_limit_max': charge_rate,
                       'feed_in_power_limitation': charge_rate,
                       'solar': 'maximise',
+                      'temperatures_to_next_sun': [],
+                      'soc_needed_for_ac': 0,
+                      'manufacturer': '',
                       'sunrise': sunrise.astimezone(timezone),
                       'sunset': sunset.astimezone(timezone),
                       'location': LocationInfo("Sydney", "Australia", timezone, latitude, longitude)}
@@ -377,6 +374,7 @@ def run_scripted_simulation(meter_data_df, script_content, filename, interval, b
                             **kwargs)
     return sim.run_simulation()
 
+
 def read_script_lines(filename):
     """
     Reads a script file and returns the content as lines of strings.
@@ -386,6 +384,7 @@ def read_script_lines(filename):
 
     return script_lines
 
+
 def read_vars_from_script(filename):
     """
     Reads capitalized variables from a file and returns them as a dictionary.
@@ -393,6 +392,7 @@ def read_vars_from_script(filename):
     """
     lines = read_script_lines(filename)
     return read_vars_from_lines(lines)
+
 
 def read_vars_from_lines(lines):
     pattern = r"^[A-Z_0-9]+\s*=\s*\d+(\.\d+)?"
@@ -403,6 +403,7 @@ def read_vars_from_lines(lines):
         for line in matches
     }
     return variables_dict
+
 
 ECONOMIST_COLORS = {
     "blue": "#6794a7",
@@ -425,9 +426,10 @@ ACTION_COLORS = {
     'discharge': ECONOMIST_COLORS["purple"]
 }
 
-def plot(ret_df, title='Simulation run'):
+
+def plot(ret_df, title='Simulation run'):  # noqa: C901
     ret_df['cost'] = ret_df['sim_cost']
-    interval = round((ret_df.index[1]-ret_df.index[0])/ pd.Timedelta(minutes=1))
+    interval = round((ret_df.index[1] - ret_df.index[0]) / pd.Timedelta(minutes=1))
     max_zoomed_rrp = 500
 
     if 'house_power' in ret_df.columns:
@@ -450,11 +452,12 @@ def plot(ret_df, title='Simulation run'):
     if 'as_is_feed_in_kwh' not in ret_df.columns:
         ret_df['as_is_feed_in_kwh'] = ret_df['as_is_feed_in_power'] / 1000.0 * interval / 60
 
-    nb_bill = 0
+    nb_bill = 0  # noqa
     retail_bill = ret_df['cost'].sum() / 100
     # five plots one ontop of the other, the first one twice as high as the others
-    fig, ax = plt.subplots(5, 1, figsize=(20, 15), sharex=True,
-                       gridspec_kw={'height_ratios': [2, 1, 1, 1, 1]})
+    fig, ax = plt.subplots(
+        5, 1, figsize=(20, 15), sharex=True,
+        gridspec_kw={'height_ratios': [2, 1, 1, 1, 1]})
     plt.subplots_adjust(hspace=0.3)  # Better vertical spacing
     for a in ax:
         a.title.set_fontsize(14)
@@ -542,7 +545,7 @@ def plot(ret_df, title='Simulation run'):
                        where=high_rrp, color=ECONOMIST_COLORS["red"], alpha=0.3, label='Spike')
 
     ax[4].set_title('Wholesale market price')
-    ax[4].plot(ret_df['rrp']/10, label='Spot price c/kWh', color=ECONOMIST_COLORS["darkgreen"])
+    ax[4].plot(ret_df['rrp'] / 10, label='Spot price c/kWh', color=ECONOMIST_COLORS["darkgreen"])
     if 'buy_price' in ret_df.columns:
         ax[4].plot(ret_df['buy_price'], label='General price c/kWh', color=ECONOMIST_COLORS["darkblue"])
     ax[4].legend()

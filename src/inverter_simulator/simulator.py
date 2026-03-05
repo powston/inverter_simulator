@@ -106,9 +106,15 @@ class InverterSimulator:
             'sunset': sunset.astimezone(ZoneInfo(self.timezone_str)),
             'feed_in_power_limitation': row.get('feed_in_power_limitation', 0),
             'site_statistics': row.get('site_statistics', {}),
+            'runtime_params': row.get('runtime_params', {}),
             'weather_data': row.get('weather_data', {}),
             'buy_forecast': row.get('buy_forecast', []),
             'sell_forecast': row.get('sell_forecast', []),
+            'threshold_1': row.get('threshold_1', 0),
+            'threshold_2': row.get('threshold_2', 0),
+            'threshold_3': row.get('threshold_3', 0),
+            'threshold_4': row.get('threshold_4', 0),
+            'threshold_5': row.get('threshold_5', 0),
             'location': location,
             'spot_to_tariff': self.spot_to_tariff,
             'spot_to_feed_in_tariff': self.spot_to_feed_in_tariff,
@@ -236,7 +242,7 @@ class InverterSimulator:
                                                            feed_in_power_limitation=feed_in_power_limitation)
             else:
                 discharge = self.battery.discharge_battery(self.battery.discharge_rate, self.interval)
-        elif action in ['import', 'import_no_solar']:
+        elif action in ['import', 'import_no_solar', 'import_at_max']:
             import_rate = self._get_import_rate(balance, show_debug=show_debug)
             if show_debug:
                 print(f'Import rate: {import_rate}, balance: {balance}, grid_limit: {self.grid_limit}')
